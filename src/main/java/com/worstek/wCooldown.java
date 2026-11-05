@@ -93,17 +93,18 @@ public class wCooldown extends JavaPlugin implements Listener, CommandExecutor, 
                 event.setCancelled(true);
                 long totalRemaining = Math.max(1, (expireTime - now) / 1000L);
 
+                // Modular components for the formatted %cooldown% string
                 long d = totalRemaining / 86400;
                 long h = (totalRemaining % 86400) / 3600;
                 long m = (totalRemaining % 3600) / 60;
                 long s = totalRemaining % 60;
 
-                StringBuilder sb = new StringBuilder();
                 String fs = getConfig().getString("format-seconds", "s");
                 String fm = getConfig().getString("format-minutes", "m");
                 String fh = getConfig().getString("format-hours", "h");
                 String fd = getConfig().getString("format-days", "d");
 
+                StringBuilder sb = new StringBuilder();
                 if (d > 0) sb.append(d).append(fd).append(" ");
                 if (h > 0) sb.append(h).append(fh).append(" ");
                 if (m > 0) sb.append(m).append(fm).append(" ");
@@ -111,14 +112,25 @@ public class wCooldown extends JavaPlugin implements Listener, CommandExecutor, 
 
                 String fmt = sb.toString().trim();
 
+                // Total values in each unit
+                long totalDays = totalRemaining / 86400;
+                long totalHours = totalRemaining / 3600;
+                long totalMinutes = totalRemaining / 60;
+                long totalSeconds = totalRemaining;
+
                 for (String line : section.getStringList(key + ".message")) {
                     player.sendMessage(ChatColor.translateAlternateColorCodes('&', line
                             .replace("%cooldown%", fmt)
-                            .replace("%cooldown_days%", String.valueOf(d))
-                            .replace("%cooldown_hours%", String.valueOf(h))
-                            .replace("%cooldown_minutes%", String.valueOf(m))
-                            .replace("%cooldown_seconds%", String.valueOf(s))
-                            .replace("%cooldown_total_seconds%", String.valueOf(totalRemaining))
+                            // Full time in unit + suffix (e.g. "100s" or "24h")
+                            .replace("%cooldown_days%", totalDays + fd)
+                            .replace("%cooldown_hours%", totalHours + fh)
+                            .replace("%cooldown_minutes%", totalMinutes + fm)
+                            .replace("%cooldown_seconds%", totalSeconds + fs)
+                            // Raw number without suffix if the admin writes custom words (e.g. "100 секунд")
+                            .replace("%cooldown_days_raw%", String.valueOf(totalDays))
+                            .replace("%cooldown_hours_raw%", String.valueOf(totalHours))
+                            .replace("%cooldown_minutes_raw%", String.valueOf(totalMinutes))
+                            .replace("%cooldown_seconds_raw%", String.valueOf(totalSeconds))
                             .replace("%command%", cmd)));
                 }
                 break;
