@@ -4,6 +4,7 @@ import org.bukkit.ChatColor;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
+import org.bukkit.command.PluginCommand;
 import org.bukkit.command.TabCompleter;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.entity.Player;
@@ -11,6 +12,7 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerCommandPreprocessEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.util.*;
@@ -30,15 +32,23 @@ public class wCooldown extends JavaPlugin implements Listener, CommandExecutor, 
         saveConfig();
 
         getServer().getPluginManager().registerEvents(this, this);
-        getCommand("wcooldown").setExecutor(this);
-        getCommand("cooldown").setExecutor(this);
-        getCommand("wcooldown").setTabCompleter(this);
-        getCommand("cooldown").setTabCompleter(this);
+
+        PluginCommand cmd = getCommand("cooldown");
+        if (cmd != null) {
+            cmd.setExecutor(this);
+            cmd.setTabCompleter(this);
+        }
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onCommand(PlayerCommandPreprocessEvent event) {
-        String cmd = event.getMessage().substring(1).split(" ")[0].toLowerCase();
+        String message = event.getMessage().trim();
+        if (message.length() <= 1) return;
+
+        // Extracts base command and removes namespace bypass (e.g. /minecraft:msg -> msg)
+        String rawCmd = message.substring(1).split(" ")[0].toLowerCase();
+        String cmd = rawCmd.contains(":") ? rawCmd.split(":", 2)[1] : rawCmd;
+
         ConfigurationSection section = getConfig().getConfigurationSection("cooldowns");
         if (section == null) return;
 
@@ -47,7 +57,8 @@ public class wCooldown extends JavaPlugin implements Listener, CommandExecutor, 
         if (player.hasPermission("wcooldown.admin")) return;
 
         for (String key : section.getKeys(false)) {
-            if (section.getStringList(key + ".commands").contains(cmd)) {
+            List<String> commands = section.getStringList(key + ".commands");
+            if (commands.contains(cmd) || commands.contains(rawCmd)) {
                 if (player.hasPermission("wcooldown.bypass.*") || player.hasPermission("wcooldown.bypass." + key)) return;
 
                 ConfigurationSection groups = section.getConfigurationSection(key + ".groups");
@@ -72,16 +83,15 @@ public class wCooldown extends JavaPlugin implements Listener, CommandExecutor, 
                 long now = System.currentTimeMillis();
                 cooldowns.putIfAbsent(uuid, new HashMap<>());
 
-                long lastUsed = cooldowns.get(uuid).getOrDefault(key, 0L);
-                long newEndTime = now + (cooldownSeconds * 1000);
+                long expireTime = cooldowns.get(uuid).getOrDefault(key, 0L);
 
-                if (now >= lastUsed || newEndTime < lastUsed) {
-                    cooldowns.get(uuid).put(key, newEndTime);
+                if (now >= expireTime) {
+                    cooldowns.get(uuid).put(key, now + (cooldownSeconds * 1000L));
                     return;
                 }
 
                 event.setCancelled(true);
-                long totalRemaining = (lastUsed - now) / 1000;
+                long totalRemaining = Math.max(1, (expireTime - now) / 1000L);
 
                 long d = totalRemaining / 86400;
                 long h = (totalRemaining % 86400) / 3600;
@@ -104,13 +114,27 @@ public class wCooldown extends JavaPlugin implements Listener, CommandExecutor, 
                 for (String line : section.getStringList(key + ".message")) {
                     player.sendMessage(ChatColor.translateAlternateColorCodes('&', line
                             .replace("%cooldown%", fmt)
-                            .replace("%cooldown_days%", String.valueOf(totalRemaining / 86400))
-                            .replace("%cooldown_hours%", String.valueOf(totalRemaining / 3600))
-                            .replace("%cooldown_minutes%", String.valueOf(totalRemaining / 60))
-                            .replace("%cooldown_seconds%", String.valueOf(totalRemaining))
+                            .replace("%cooldown_days%", String.valueOf(d))
+                            .replace("%cooldown_hours%", String.valueOf(h))
+                            .replace("%cooldown_minutes%", String.valueOf(m))
+                            .replace("%cooldown_seconds%", String.valueOf(s))
+                            .replace("%cooldown_total_seconds%", String.valueOf(totalRemaining))
                             .replace("%command%", cmd)));
                 }
                 break;
+            }
+        }
+    }
+
+    @EventHandler
+    public void onQuit(PlayerQuitEvent event) {
+        UUID uuid = event.getPlayer().getUniqueId();
+        Map<String, Long> userCooldowns = cooldowns.get(uuid);
+        if (userCooldowns != null) {
+            long now = System.currentTimeMillis();
+            userCooldowns.entrySet().removeIf(entry -> now >= entry.getValue());
+            if (userCooldowns.isEmpty()) {
+                cooldowns.remove(uuid);
             }
         }
     }
@@ -140,7 +164,11 @@ public class wCooldown extends JavaPlugin implements Listener, CommandExecutor, 
             sender.sendMessage(ChatColor.translateAlternateColorCodes('&', "§x§7§4§A§C§F§6● &fConfiguration was reloaded"));
             return true;
         }
-        return false;
+
+        sender.sendMessage(ChatColor.translateAlternateColorCodes('&',
+                "§x§7§4§A§C§F§6● &fwCooldown &7v" + getDescription().getVersion() + " &fby &x§7§4§A§C§F§6Worstek\n" +
+                "&7Use &f/cooldown reload &7to reload the configuration."));
+        return true;
     }
 
     @Override
